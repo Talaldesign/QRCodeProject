@@ -9,24 +9,39 @@ function ccToCurrency(cc: string) {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // حدّد اللغة من المتصفح
+  const al = (req.headers['accept-language'] as string) || '';
+  const lang = al.toLowerCase().startsWith('ar') ? 'ar' : 'en';
+
+  // استخرج IP الحقيقي (Vercel يمرّره هنا). لو فاضي، المزود سيستنتجه.
+  const ipRaw = (req.headers['x-forwarded-for'] as string) || '';
+  const ip = ipRaw.split(',')[0]?.trim() || '';
+
+  const key = process.env.IPDATA_API_KEY; // لو موجود، جرّب ipdata أولًا
   try {
-    const al = (req.headers['accept-language'] as string) || '';
-    const lang = al.toLowerCase().startsWith('ar') ? 'ar' : 'en';
+    if (key) {
+      const r1 = await fetch(`https://api.ipdata.co/${ip}?api-key=${key}`, { cache: 'no-store' });
+      if (r1.ok) {
+        const g = await r1.json();
+        const country = String(g?.country_code || 'OM').toUpperCase();
+        const currency = ccToCurrency(country);
+        const timezone = g?.time_zone?.name || 'Asia/Muscat';
+        return res.status(200).json({ lang, country, currency, timezone, source: 'ipdata' });
+      }
+    }
 
-    const ipRaw = (req.headers['x-forwarded-for'] as string) || '';
-    const ip = ipRaw.split(',')[0] || ''; // ipapi سيستنتج IP إن تركته فارغ
-
-    // خدمة مجانية لا تحتاج access_key
-    const geoRes = await fetch(`https://ipapi.co/${ip}/json/`, { cache: 'no-store' });
-    const geo = await geoRes.json();
-
-    const country = String(geo?.country || 'OM').toUpperCase();
+    // Fallback مجّاني: ipapi.co
+    const r2 = await fetch(`https://ipapi.co/${ip}/json/`, { cache: 'no-store' });
+    const g2 = await r2.json();
+    const country = String(g2?.country || 'OM').toUpperCase();
     const currency = ccToCurrency(country);
-    const timezone = geo?.timezone || 'Asia/Muscat';
+    const timezone = g2?.timezone || 'Asia/Muscat';
+    return res.status(200).json({ lang, country, currency, timezone, source: 'ipapi' });
 
-    return res.status(200).json({ lang, country, currency, timezone });
   } catch {
-    // fallback آمن
-    return res.status(200).json({ lang: 'ar', country: 'OM', currency: 'OMR', timezone: 'Asia/Muscat' });
+    // آخر حل آمن
+    return res.status(200).json({
+      lang: 'ar', country: 'OM', currency: 'OMR', timezone: 'Asia/Muscat', source: 'fallback'
+    });
   }
 }
